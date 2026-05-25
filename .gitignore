@@ -4,9 +4,6 @@ Thumbs.db
 .vscode/
 .idea/
 
-# 원본 영상 (배포에 불필요, 핑퐁 처리된 bg-loop.mp4만 사용)
-bg.mp4
-
 # 빌드 산출물
 node_modules/
 dist/
