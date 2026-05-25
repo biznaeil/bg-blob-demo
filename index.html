@@ -96,17 +96,6 @@
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/></svg>");
   }
 
-  /*
-    네온 트레일 캔버스.
-    WHY: 레이어 순서 — 비디오(0) → 비네트(1) → 노이즈(2) → 캔버스(3) → 본문(4).
-  */
-  #neon-canvas {
-    position: fixed;
-    inset: 0;
-    z-index: 3;
-    pointer-events: none;
-  }
-
   /* 본문 콘텐츠 */
   .content {
     position: relative;
@@ -182,9 +171,6 @@
   <!-- 노이즈 -->
   <div class="noise"></div>
 
-  <!-- 네온 트레일 캔버스 -->
-  <canvas id="neon-canvas"></canvas>
-
   <!-- 본문 -->
   <main class="content">
     <h1>Design at the<br />speed of AI</h1>
@@ -251,194 +237,8 @@
     }
   })();
 
-  /* ---------------------------------------------------------------
-     별빛 트레일 효과 (마우스를 따라 출렁이는 수많은 별)
-     WHY: 단일 네온 선이 아닌 파티클 시스템. 마우스 움직임마다 여러 별을 뿌리고
-          각 별은 (1) 마우스 반대방향으로 살짝 흐름 (2) 시간에 따라 sin파로 출렁임
-          (3) 별마다 다른 위상으로 깜빡임. globalCompositeOperation='lighter' 로
-          별들이 겹쳐도 더 밝게 합성되어 진짜 "별빛 무리" 느낌이 남.
-     --------------------------------------------------------------- */
-  (function () {
-    const canvas = document.getElementById('neon-canvas');
-    if (!canvas) {
-      console.error('[stardust] 캔버스 엘리먼트를 못 찾음');
-      return;
-    }
-
-    // 터치 디바이스에서는 비활성화 (마우스 없음 + 배터리 보호)
-    const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
-    if (isTouch) {
-      canvas.style.display = 'none';
-      console.log('[stardust] 터치 디바이스 — 트레일 비활성화');
-      return;
-    }
-
-    const ctx = canvas.getContext('2d');
-
-    // DPR 대응 — 레티나에서 별이 흐려지지 않게 실해상도로 그림
-    let dpr = window.devicePixelRatio || 1;
-    function resize() {
-      dpr = window.devicePixelRatio || 1;
-      canvas.width = window.innerWidth * dpr;
-      canvas.height = window.innerHeight * dpr;
-      canvas.style.width = window.innerWidth + 'px';
-      canvas.style.height = window.innerHeight + 'px';
-      ctx.scale(dpr, dpr);
-    }
-    resize();
-    window.addEventListener('resize', resize);
-
-    const particles = [];
-    const MAX_PARTICLES = 1200;     // 메모리/성능 보호 상한
-    const LIFE_DECAY = 0.010;        // 약 1.7초 후 사라짐
-    let time = 0;                    // 전체 시간 (twinkle/wave 위상 계산용)
-
-    // 차가운 색 팔레트 — 별빛/얼음 톤
-    // WHY: 따뜻한 색(빨강/주황)은 불꽃 인상, 차가운 색(파랑/보라/시안)은 별 인상
-    const PALETTE_HUES = [180, 200, 220, 240, 260, 280, 190, 210];
-
-    // 마우스 상태
-    let mouseX = window.innerWidth / 2;
-    let mouseY = window.innerHeight / 2;
-    let prevX = mouseX, prevY = mouseY;
-    let mouseVX = 0, mouseVY = 0;
-
-    function spawnStar(x, y) {
-      if (particles.length >= MAX_PARTICLES) return;
-
-      // 속도: 마우스 반대방향 약간 + 수직 랜덤 스프레드
-      // WHY: 반대방향 → 트레일이 뒤에 깔리는 인상.
-      //      수직 스프레드 → 별들이 부채꼴로 퍼지며 출렁임.
-      const backFactor = -0.15;
-      const perpAngle = Math.atan2(mouseVY, mouseVX) + Math.PI / 2;
-      const perpSpread = (Math.random() - 0.5) * 3;
-
-      particles.push({
-        x, y,
-        vx: mouseVX * backFactor + Math.cos(perpAngle) * perpSpread,
-        vy: mouseVY * backFactor + Math.sin(perpAngle) * perpSpread,
-        life: 1.0,
-        size: 0.5 + Math.random() * 2.0,           // 0.5~2.5px (작은 별 위주)
-        hue: PALETTE_HUES[Math.floor(Math.random() * PALETTE_HUES.length)],
-        twinklePhase: Math.random() * Math.PI * 2, // 깜빡임 시작 위상 (별마다 다름)
-        twinkleSpeed: 3 + Math.random() * 4,       // 깜빡임 주파수 (별마다 다름)
-        waveAmp: 0.5 + Math.random() * 1.8,        // 출렁임 진폭(px)
-        wavePhase: Math.random() * Math.PI * 2,    // 출렁임 위상
-        isWhite: false,
-      });
-
-      // 10% 확률로 큰 흰 별 (시각적 포인트)
-      // WHY: 모두 비슷한 크기면 단조로움. 가끔 큰 별이 섞여야 자연스러운 별무리.
-      if (Math.random() < 0.1) {
-        particles.push({
-          x, y,
-          vx: mouseVX * backFactor * 0.5,
-          vy: mouseVY * backFactor * 0.5,
-          life: 1.0,
-          size: 2.5 + Math.random() * 1.5,
-          hue: 0,
-          twinklePhase: Math.random() * Math.PI * 2,
-          twinkleSpeed: 2 + Math.random() * 2,
-          waveAmp: 0.3,
-          wavePhase: Math.random() * Math.PI * 2,
-          isWhite: true,
-        });
-      }
-    }
-
-    // 페이지 로드 시 화면 중앙에 시드 별 (효과 살아있음 확인용)
-    // WHY: 마우스 안 움직여도 별이 보여야 트레일 활성화 여부 즉시 판단됨
-    for (let i = 0; i < 30; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const r = Math.random() * 150;
-      spawnStar(
-        window.innerWidth / 2 + Math.cos(angle) * r,
-        window.innerHeight / 2 + Math.sin(angle) * r
-      );
-    }
-    console.log('[stardust] 별빛 트레일 활성화 — 마우스를 움직여보세요');
-
-    window.addEventListener('mousemove', (e) => {
-      const dx = e.clientX - prevX;
-      const dy = e.clientY - prevY;
-      mouseVX = dx;
-      mouseVY = dy;
-
-      // 거리에 비례한 파티클 생성 (빠른 움직임 = 더 많은 별)
-      const dist = Math.hypot(dx, dy);
-      const spawns = Math.min(12, Math.max(2, Math.floor(dist / 2)));
-      for (let i = 0; i < spawns; i++) {
-        const t = i / spawns;
-        spawnStar(prevX + dx * t, prevY + dy * t);
-      }
-
-      prevX = mouseX = e.clientX;
-      prevY = mouseY = e.clientY;
-    });
-
-    // 마우스 정지 80ms 후 속도 0으로 (잔여 속도로 별이 이상한 방향으로 안 쏠리게)
-    let stopTimer = null;
-    window.addEventListener('mousemove', () => {
-      clearTimeout(stopTimer);
-      stopTimer = setTimeout(() => { mouseVX = 0; mouseVY = 0; }, 80);
-    });
-
-    function draw() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      time += 0.016; // ~60fps 기준 초 단위 증가
-
-      // additive blending — 별 겹치면 더 밝게 (실제 별빛 합성처럼)
-      ctx.globalCompositeOperation = 'lighter';
-
-      for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
-
-        // 물리: 위치 적분 + 마찰
-        p.x += p.vx;
-        p.y += p.vy;
-        p.vx *= 0.96;
-        p.vy *= 0.96;
-        p.life -= LIFE_DECAY;
-
-        if (p.life <= 0) {
-          particles.splice(i, 1);
-          continue;
-        }
-
-        // 출렁임 — 각 별마다 위상 다른 sin파로 위치 진동
-        // WHY: 전체적으로 "물결치는 별무리" 효과. 위상이 다 다르니
-        //      모두가 같은 박자로 움직이지 않고 자연스러운 파도가 됨.
-        const waveX = Math.sin(time * 2 + p.wavePhase) * p.waveAmp;
-        const waveY = Math.cos(time * 2.3 + p.wavePhase) * p.waveAmp;
-        const drawX = p.x + waveX;
-        const drawY = p.y + waveY;
-
-        // 깜빡임 — 별마다 다른 속도로 alpha 진동 (twinkle)
-        const twinkle = 0.4 + 0.6 * Math.abs(Math.sin(time * p.twinkleSpeed + p.twinklePhase));
-        const alpha = p.life * twinkle;
-
-        // 그리기 — shadowBlur로 후광 + 원 본체
-        if (p.isWhite) {
-          ctx.shadowColor = 'rgba(255, 255, 255, 1)';
-          ctx.shadowBlur = 16;
-          ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
-        } else {
-          ctx.shadowColor = `hsla(${p.hue}, 100%, 80%, 1)`;
-          ctx.shadowBlur = 10;
-          ctx.fillStyle = `hsla(${p.hue}, 90%, 75%, ${alpha})`;
-        }
-
-        ctx.beginPath();
-        ctx.arc(drawX, drawY, p.size, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // 기본 합성 모드로 복귀 (다음 프레임의 clearRect는 source-over에서 작동)
-      ctx.globalCompositeOperation = 'source-over';
-      requestAnimationFrame(draw);
-    }
-    draw();
-  })();
+  /* 별빛 트레일 효과는 사용자 요청으로 제거됨 (2026-05-25).
+     필요시 git history의 99839a2 커밋에서 복원 가능. */
   </script>
 
 </body>
