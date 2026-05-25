@@ -27,18 +27,35 @@
   }
 
   /*
-    비디오 배경 레이어.
-    WHY: object-fit:cover로 비율 깨짐 없이 화면을 꽉 채움.
-         pointer-events:none이라야 비디오가 클릭/스크롤을 가로채지 않음.
-         filter brightness 약간 낮춰 본문 텍스트 가독성 확보.
+    스크롤러 컨테이너 — 비디오 2개를 옆으로 붙여 무한 우→좌 스크롤.
+    WHY: 한 개 비디오만 translateX하면 오른쪽에 빈 공간이 생김.
+         같은 비디오 2개를 100vw씩 나란히 두면 한 화면 너비만큼 이동 후
+         다시 0으로 wrap해도 시각적으로 연속 (두 영상이 동일하니 이음새 안 보임).
+         will-change:transform으로 GPU 컴포지팅 레이어 강제 생성.
+  */
+  .bg-scroller {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 200vw;
+    height: 100vh;
+    display: flex;
+    z-index: 0;
+    pointer-events: none;
+    will-change: transform;
+  }
+
+  /*
+    비디오 배경 레이어 (스크롤러 안에 2개).
+    WHY: flex:0 0 100vw로 각 비디오가 정확히 뷰포트 너비를 차지하도록 고정.
+         object-fit:cover로 비율 깨짐 없이 채움.
+         filter brightness/saturate로 본문 가독성 확보 + 시네마틱 톤.
   */
   .bg-video {
-    position: fixed;
-    inset: 0;
-    width: 100%;
-    height: 100%;
+    flex: 0 0 100vw;
+    width: 100vw;
+    height: 100vh;
     object-fit: cover;
-    z-index: 0;
     pointer-events: none;
     filter: brightness(0.85) saturate(1.1);
   }
@@ -148,22 +165,28 @@
 </head>
 <body>
 
-  <!-- 폴백 이미지 배경 — 비디오 위에 비디오가 깔리는 구조 (둘 다 z:0) -->
+  <!-- 폴백 이미지 배경 — 비디오 로드 전/실패 시 노출 -->
   <div class="bg-fallback" aria-hidden="true"></div>
 
   <!--
-    배경 비디오.
-    WHY: muted는 브라우저 자동재생 정책 필수 조건.
-         poster는 비디오 로드 전/실패 시 표시될 정적 이미지.
-         preload="metadata"는 모바일 데이터 절약 (전체 다운로드 안 함).
+    스크롤러: 비디오 2개를 옆으로 붙여놓고 컨테이너를 좌측으로 translateX.
+    WHY: 무한 우→좌 스크롤. 두 비디오는 src 동일 + autoplay/loop 동일하니
+         시작 타이밍만 같으면 평생 같은 프레임을 보여줌 → 이음새 안 보임.
+         muted는 자동재생 정책 필수 조건. preload="auto"는 즉시 재생 보장.
   -->
-  <video class="bg-video"
-         autoplay muted loop playsinline
-         preload="metadata"
-         poster="poster.jpg"
-         aria-hidden="true">
-    <source src="bg.mp4" type="video/mp4" />
-  </video>
+  <div class="bg-scroller" aria-hidden="true">
+    <video class="bg-video"
+           autoplay muted loop playsinline
+           preload="auto"
+           poster="poster.jpg">
+      <source src="bg.mp4" type="video/mp4" />
+    </video>
+    <video class="bg-video"
+           autoplay muted loop playsinline
+           preload="auto">
+      <source src="bg.mp4" type="video/mp4" />
+    </video>
+  </div>
 
   <!-- 비네트 -->
   <div class="vignette"></div>
@@ -181,64 +204,127 @@
 
   <script>
   /* ---------------------------------------------------------------
-     모바일/저전력 디바이스 감지 → 비디오 자동재생 차단
-     WHY: 모바일에서는 데이터/배터리 비용이 크고 자동재생 실패율도 높음.
-          소형 화면 또는 Save-Data 모드 또는 저배터리면 비디오를 끄고
-          poster.jpg(.bg-fallback)만 노출 → 사용자 체감 동일, 비용 0.
+     비디오 자동재생 보장 + 모바일/저전력 차단 + 두 비디오 시간 동기화
+     WHY: querySelectorAll로 모든 .bg-video 처리 (스크롤러 안에 2개).
+          모바일/Save-Data면 스크롤러 통째로 숨기고 poster 폴백만.
+          데스크톱에서는 자동재생 시도 + 첫 인터랙션 시 재시도.
+          간헐적으로 두 비디오의 currentTime 차이를 보정해 이음새 드리프트 방지.
      --------------------------------------------------------------- */
   (function () {
-    const video = document.querySelector('.bg-video');
-    if (!video) return;
+    const scroller = document.querySelector('.bg-scroller');
+    const videos = document.querySelectorAll('.bg-video');
+    if (!videos.length) return;
 
     const isSmallScreen = window.matchMedia('(max-width: 768px)').matches;
     const saveData = navigator.connection && navigator.connection.saveData;
 
-    function disableVideo() {
-      video.pause();
-      video.removeAttribute('autoplay');
-      video.preload = 'none';
-      video.style.display = 'none';
+    function disableAll() {
+      videos.forEach(v => {
+        v.pause();
+        v.removeAttribute('autoplay');
+        v.preload = 'none';
+      });
+      if (scroller) scroller.style.display = 'none';
     }
 
     if (isSmallScreen || saveData) {
-      disableVideo();
-      console.log('[bg] 모바일/Save-Data 감지 — poster 폴백만 사용');
-    } else {
-      // 데스크톱: 자동재생 보장 (Safari 등에서 가끔 실패)
-      const tryPlay = () => {
-        const p = video.play();
-        if (p && p.catch) p.catch(() => {/* 사용자 제스처 대기 */});
-      };
-      tryPlay();
-      const onFirst = () => {
-        tryPlay();
-        window.removeEventListener('click', onFirst);
-        window.removeEventListener('touchstart', onFirst);
-      };
-      window.addEventListener('click', onFirst, { once: true });
-      window.addEventListener('touchstart', onFirst, { once: true });
+      disableAll();
+      console.log('[bg] 모바일/Save-Data 감지 — 스크롤 비활성화, poster만 노출');
+      return;
     }
 
-    // 배터리 API: 충전 중 아니고 20% 이하면 비디오 정지
-    // WHY: 노트북 사용자가 카페 등에서 배터리 절약 중일 때 친절한 UX.
-    //      배터리 API 없는 브라우저(Safari/Firefox)는 그냥 패스.
+    // 데스크톱: 자동재생 시도
+    const tryPlayAll = () => {
+      videos.forEach(v => {
+        const p = v.play();
+        if (p && p.catch) p.catch(() => {/* 사용자 제스처 대기 */});
+      });
+    };
+    tryPlayAll();
+    const onFirst = () => {
+      tryPlayAll();
+      window.removeEventListener('click', onFirst);
+      window.removeEventListener('touchstart', onFirst);
+    };
+    window.addEventListener('click', onFirst, { once: true });
+    window.addEventListener('touchstart', onFirst, { once: true });
+
+    // 두 비디오 시간 동기화 (1초마다 0.1초 이상 차이 나면 보정)
+    // WHY: autoplay loop인 두 비디오가 미세하게 drift할 수 있음.
+    //      drift가 누적되면 wrap 순간 이음새가 살짝 보임 → 주기적 동기화.
+    if (videos.length >= 2) {
+      setInterval(() => {
+        const t0 = videos[0].currentTime;
+        const t1 = videos[1].currentTime;
+        if (Math.abs(t0 - t1) > 0.1) videos[1].currentTime = t0;
+      }, 1000);
+    }
+
+    // 배터리 절약 — 충전 중 아니고 20% 이하면 정지
     if (navigator.getBattery) {
       navigator.getBattery().then((battery) => {
-        const checkBattery = () => {
+        const check = () => {
           if (!battery.charging && battery.level < 0.2) {
-            disableVideo();
-            console.log('[bg] 저배터리 감지 — 비디오 일시정지');
+            disableAll();
+            console.log('[bg] 저배터리 감지 — 비디오 정지');
           }
         };
-        checkBattery();
-        battery.addEventListener('levelchange', checkBattery);
-        battery.addEventListener('chargingchange', checkBattery);
+        check();
+        battery.addEventListener('levelchange', check);
+        battery.addEventListener('chargingchange', check);
       });
     }
   })();
 
-  /* 별빛 트레일 효과는 사용자 요청으로 제거됨 (2026-05-25).
-     필요시 git history의 99839a2 커밋에서 복원 가능. */
+  /* ---------------------------------------------------------------
+     우→좌 스크롤 애니메이션 (0~30s 가속, 30s+ 최대속도 유지)
+     WHY: CSS animation 대신 JS requestAnimationFrame으로 직접 계산.
+          이유 ① CSS 키프레임은 30s 가속 후 wrap 시 점프가 부자연스러움
+              ② JS면 dt 기반이라 탭 전환 후 복귀해도 일관된 속도
+              ③ 사용자가 나중에 곡선 튜닝하기 쉬움
+     속도 곡선:
+       0~30s : 30 px/s → 600 px/s (제곱 가속 = 가속이 가속됨)
+       30s~  : 600 px/s 유지
+     wrap: position이 -100vw 이하로 가면 +100vw해서 0~-100vw 범위 유지.
+           두 비디오가 동일 src/시간이라 wrap 순간 시각적 점프 없음.
+     --------------------------------------------------------------- */
+  (function () {
+    const scroller = document.querySelector('.bg-scroller');
+    if (!scroller) return;
+
+    // 모바일/스크롤 비활성화 상태면 애니메이션 건너뜀
+    if (window.getComputedStyle(scroller).display === 'none') return;
+
+    let position = 0;
+    let lastTime = performance.now();
+    const startTime = lastTime;
+
+    function tick(now) {
+      // dt 최대 0.1s 캡 — 탭 전환 후 복귀 시 큰 점프 방지
+      const dt = Math.min(0.1, (now - lastTime) / 1000);
+      lastTime = now;
+      const elapsed = (now - startTime) / 1000;
+
+      let speed;
+      if (elapsed < 30) {
+        const k = elapsed / 30;             // 0 → 1
+        speed = 30 + k * k * 570;            // 30 → 600 (quadratic ease-in)
+      } else {
+        speed = 600;
+      }
+
+      position -= speed * dt;
+
+      // wrap: -100vw 이하로 가면 +100vw해서 항상 0 ~ -100vw 범위 유지
+      const vw = window.innerWidth;
+      while (position <= -vw) position += vw;
+
+      scroller.style.transform = `translate3d(${position}px, 0, 0)`;
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+    console.log('[scroll] 우→좌 스크롤 시작 — 0~30s 가속, 30s+ 최대속도 유지');
+  })();
   </script>
 
 </body>
