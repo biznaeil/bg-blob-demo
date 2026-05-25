@@ -27,59 +27,51 @@
   }
 
   /*
-    비디오 배경 레이어.
-    WHY: object-fit:cover로 비율 깨짐 없이 화면을 꽉 채움.
-         pointer-events:none이라야 비디오가 클릭/스크롤을 가로채지 않음.
-         filter brightness 약간 낮춰 본문 텍스트 가독성 확보.
+    비디오 배경 / 폴백 이미지.
+    WHY: 사용자 요청으로 1인칭 네온 터널 효과로 전환됨 (2026-05-25).
+         배경 비디오/이미지는 숨김 처리. 파일은 보존 — 필요시 display:flex로 복원.
   */
-  .bg-video {
+  .bg-video,
+  .bg-fallback {
+    display: none;
+  }
+
+  /*
+    네온 터널 캔버스 (1인칭 워프 효과).
+    WHY: 3D 원근 투영으로 네온 사인이 멀리서 가까워지는 모션.
+         z-index 1 = 가장 아래 시각 레이어. 본문/노이즈/비네트가 위에 얹힘.
+         pointer-events:none이라야 클릭/스크롤 안 막음.
+  */
+  #tunnel-canvas {
     position: fixed;
     inset: 0;
     width: 100%;
     height: 100%;
-    object-fit: cover;
-    z-index: 0;
+    z-index: 1;
     pointer-events: none;
-    filter: brightness(0.85) saturate(1.1);
-  }
-
-  /*
-    모바일 폴백 이미지 — 비디오 안 뜰 때 보일 정적 배경.
-    WHY: 모바일은 자동재생 실패율이 높고 데이터/배터리 비용도 큼.
-         poster 속성과 별도로 항상 깔아두면 어떤 상황에서도 검은 화면이 안 보임.
-         JS가 모바일/저전력 감지 시 비디오를 display:none으로 숨기면 이게 노출됨.
-  */
-  .bg-fallback {
-    position: fixed;
-    inset: 0;
-    z-index: 0;
-    background-image: url("poster.jpg");
-    background-size: cover;
-    background-position: center;
-    pointer-events: none;
-    filter: brightness(0.85) saturate(1.1);
+    background: #000;
   }
 
   /*
     상하 그라데이션 마스크 (비네트).
-    WHY: 스티치가 쓰는 트릭 — 영상 위/아래를 검정으로 페이드시켜
-         본문 영역과 자연스럽게 섞이게 함.
+    WHY: 터널 효과에서도 화면 가장자리를 어둡게 해야 중앙 소실점이 강조됨.
+         "터널 안으로 빨려 들어가는" 시각 깊이를 만들어줌.
   */
   .vignette {
     position: fixed;
     inset: 0;
-    z-index: 1;
+    z-index: 2;
     pointer-events: none;
     background:
       linear-gradient(180deg,
-        rgba(0,0,0,0.6) 0%,
-        rgba(0,0,0,0) 25%,
-        rgba(0,0,0,0) 70%,
-        rgba(0,0,0,0.85) 100%
+        rgba(0,0,0,0.5) 0%,
+        rgba(0,0,0,0) 20%,
+        rgba(0,0,0,0) 80%,
+        rgba(0,0,0,0.8) 100%
       ),
       radial-gradient(ellipse at center,
-        rgba(0,0,0,0) 40%,
-        rgba(0,0,0,0.5) 100%
+        rgba(0,0,0,0) 35%,
+        rgba(0,0,0,0.6) 100%
       );
   }
 
@@ -92,14 +84,14 @@
     inset: 0;
     pointer-events: none;
     opacity: 0.05;
-    z-index: 2;
+    z-index: 3;
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/></svg>");
   }
 
   /* 본문 콘텐츠 */
   .content {
     position: relative;
-    z-index: 4;
+    z-index: 5;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
@@ -165,6 +157,9 @@
     <source src="bg-loop.mp4" type="video/mp4" />
   </video>
 
+  <!-- 네온 터널 캔버스 (1인칭 워프) -->
+  <canvas id="tunnel-canvas" aria-hidden="true"></canvas>
+
   <!-- 비네트 -->
   <div class="vignette"></div>
 
@@ -181,64 +176,193 @@
 
   <script>
   /* ---------------------------------------------------------------
-     모바일/저전력 디바이스 감지 → 비디오 자동재생 차단
-     WHY: 모바일에서는 데이터/배터리 비용이 크고 자동재생 실패율도 높음.
-          소형 화면 또는 Save-Data 모드 또는 저배터리면 비디오를 끄고
-          poster.jpg(.bg-fallback)만 노출 → 사용자 체감 동일, 비용 0.
+     비디오 자동재생 차단 (터널 효과로 전환됐으므로 비디오는 다운로드도 막음)
+     WHY: CSS display:none만으로는 일부 브라우저가 메타데이터를 다운로드함.
+          src를 비우고 pause/preload="none"으로 명시적 차단해야 데이터/배터리 절약.
      --------------------------------------------------------------- */
   (function () {
     const video = document.querySelector('.bg-video');
     if (!video) return;
-
-    const isSmallScreen = window.matchMedia('(max-width: 768px)').matches;
-    const saveData = navigator.connection && navigator.connection.saveData;
-
-    function disableVideo() {
-      video.pause();
-      video.removeAttribute('autoplay');
-      video.preload = 'none';
-      video.style.display = 'none';
-    }
-
-    if (isSmallScreen || saveData) {
-      disableVideo();
-      console.log('[bg] 모바일/Save-Data 감지 — poster 폴백만 사용');
-    } else {
-      // 데스크톱: 자동재생 보장 (Safari 등에서 가끔 실패)
-      const tryPlay = () => {
-        const p = video.play();
-        if (p && p.catch) p.catch(() => {/* 사용자 제스처 대기 */});
-      };
-      tryPlay();
-      const onFirst = () => {
-        tryPlay();
-        window.removeEventListener('click', onFirst);
-        window.removeEventListener('touchstart', onFirst);
-      };
-      window.addEventListener('click', onFirst, { once: true });
-      window.addEventListener('touchstart', onFirst, { once: true });
-    }
-
-    // 배터리 API: 충전 중 아니고 20% 이하면 비디오 정지
-    // WHY: 노트북 사용자가 카페 등에서 배터리 절약 중일 때 친절한 UX.
-    //      배터리 API 없는 브라우저(Safari/Firefox)는 그냥 패스.
-    if (navigator.getBattery) {
-      navigator.getBattery().then((battery) => {
-        const checkBattery = () => {
-          if (!battery.charging && battery.level < 0.2) {
-            disableVideo();
-            console.log('[bg] 저배터리 감지 — 비디오 일시정지');
-          }
-        };
-        checkBattery();
-        battery.addEventListener('levelchange', checkBattery);
-        battery.addEventListener('chargingchange', checkBattery);
-      });
-    }
+    video.pause();
+    video.removeAttribute('autoplay');
+    video.preload = 'none';
+    video.removeAttribute('src');
+    // source 자식 엘리먼트도 비우기
+    const src = video.querySelector('source');
+    if (src) src.removeAttribute('src');
+    video.load();
   })();
 
-  /* 별빛 트레일 효과는 사용자 요청으로 제거됨 (2026-05-25).
-     필요시 git history의 99839a2 커밋에서 복원 가능. */
+  /* ---------------------------------------------------------------
+     1인칭 네온 터널 효과 (2026-05-25 추가)
+     WHY: 3D 원근 투영으로 네온 사인이 멀리(큰 z)에서 가까이(작은 z) 이동.
+          z 가 0에 가까워질수록 화면상 위치가 중앙에서 멀어지며 굵고 밝게 보임.
+          → "내가 네온 사이를 뚫고 앞으로 나아가는" 1인칭 워프 효과.
+
+          시간 곡선:
+            0~10s : 천천히 (속도 1.0 → 1.5)
+            10~30s: 제곱 곡선으로 가속 (1.5 → 26.5)
+            30s~  : 폭주 유지 (26.5)
+          밀도 곡선:
+            0~10s : 180개
+            10~30s: 180 → 1200개 선형 증가
+            30s~  : 1200개 유지
+     --------------------------------------------------------------- */
+  (function () {
+    const canvas = document.getElementById('tunnel-canvas');
+    if (!canvas) {
+      console.error('[tunnel] 캔버스 엘리먼트 못 찾음');
+      return;
+    }
+    const ctx = canvas.getContext('2d');
+
+    // DPR 대응. setTransform으로 변환 행렬을 깔끔히 리셋.
+    // WHY: canvas.width 변경 시 변환이 리셋되는데, scale 호출을 누적하지 말고
+    //      매번 setTransform으로 절대값 지정하는 게 안전.
+    let dpr = window.devicePixelRatio || 1;
+    let W, H, CX, CY;
+    function resize() {
+      dpr = window.devicePixelRatio || 1;
+      W = window.innerWidth;
+      H = window.innerHeight;
+      canvas.width = W * dpr;
+      canvas.height = H * dpr;
+      canvas.style.width = W + 'px';
+      canvas.style.height = H + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      CX = W / 2;
+      CY = H / 2;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    // 네온 사인 색상 팔레트 (다양한 네온 톤)
+    // WHY: 단색 터널은 단조로움. 시안/마젠타/퍼플/옐로 등 네온 클래식 색을 섞어야
+    //      "네온 사인 거리"의 느낌이 남.
+    const HUES = [180, 195, 220, 280, 310, 330, 55, 140, 350];
+
+    const MAX_PARTICLES = 1200;
+    const INITIAL_COUNT = 180;
+    const FOCAL = 320;        // 원근 초점거리 (클수록 좁은 시야각, 작을수록 넓은 시야각)
+    const Z_FAR = 1800;        // 가장 먼 깊이
+    const Z_SPAWN_FAR = 1000;  // 재생성 시 시작 깊이 (먼 곳에서 등장)
+
+    // 파티클: 3D 공간의 네온 사인 한 개
+    // WHY: 클래스 안 쓰고 plain object — 메모리 절약 + 일관된 shape으로 v8 최적화 유리
+    function makeParticle(spawnAtFar) {
+      return {
+        // x/y 분포는 화면 비율보다 살짝 더 넓게 (가장자리도 채워야 자연스러움)
+        x: (Math.random() - 0.5) * 2400,
+        y: (Math.random() - 0.5) * 1800,
+        z: spawnAtFar ? Z_SPAWN_FAR + Math.random() * 800 : Math.random() * Z_FAR + 100,
+        hue: HUES[(Math.random() * HUES.length) | 0],
+        prevZ: 0,
+      };
+    }
+
+    const particles = [];
+    for (let i = 0; i < INITIAL_COUNT; i++) particles.push(makeParticle(false));
+
+    const startTime = performance.now();
+
+    // 시간 → 속도 곡선
+    // WHY: 0~10s는 거의 정지에 가깝게 (관찰 시간 줌), 10~30s는 제곱 곡선으로
+    //      점점 더 빠르게 (체감상 "가속이 가속됨"), 30s+는 max 유지.
+    function getSpeed(t) {
+      if (t < 10) return 1.0 + (t / 10) * 0.5;
+      if (t < 30) {
+        const k = (t - 10) / 20;       // 0~1
+        return 1.5 + k * k * 25;        // 1.5 → 26.5 (quadratic ease-in)
+      }
+      return 26.5;
+    }
+
+    // 시간 → 목표 파티클 수
+    // WHY: 처음엔 띄엄띄엄, 30s엔 화면을 가득 채운 네온 폭포.
+    function getTargetCount(t) {
+      if (t < 10) return INITIAL_COUNT;
+      if (t < 30) {
+        const k = (t - 10) / 20;
+        return (INITIAL_COUNT + k * (MAX_PARTICLES - INITIAL_COUNT)) | 0;
+      }
+      return MAX_PARTICLES;
+    }
+
+    function draw() {
+      const t = (performance.now() - startTime) / 1000;
+      const speed = getSpeed(t);
+      const targetCount = getTargetCount(t);
+
+      // 파티클 수 점진 증가
+      while (particles.length < targetCount) particles.push(makeParticle(true));
+
+      // 모션 블러 — 부분 페이드 (완전 clear 대신)
+      // WHY: 부분 페이드를 깔면 이전 프레임의 streak이 남아서 빠른 움직임이
+      //      "흐르는 빛" 처럼 보임. 알파값이 클수록 잔상 짧음(0.22 = 약 4프레임 잔상)
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+      ctx.fillRect(0, 0, W, H);
+
+      // additive blending — 네온이 겹치면 더 밝게 (실제 빛 합성)
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineCap = 'round';
+
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        p.prevZ = p.z;
+        p.z -= speed;
+
+        // z 가 0 이하 = 카메라를 지나감 → 멀리서 재생성
+        if (p.z <= 1) {
+          const np = makeParticle(true);
+          p.x = np.x; p.y = np.y; p.z = np.z; p.hue = np.hue; p.prevZ = np.z;
+          continue;
+        }
+
+        // 원근 투영: screen = (world / z) * focal + center
+        // WHY: z 가 작을수록(가까울수록) 분모가 작아져 화면상 거리가 커짐 → 가장자리로 튕겨나감.
+        //      z 가 클수록(멀수록) 화면상 거리가 작아져 중앙 소실점에 모임.
+        const sx1 = (p.x / p.z) * FOCAL + CX;
+        const sy1 = (p.y / p.z) * FOCAL + CY;
+        const sx2 = (p.x / p.prevZ) * FOCAL + CX;
+        const sy2 = (p.y / p.prevZ) * FOCAL + CY;
+
+        // 화면 밖이면 스킵 (양 끝점 모두 밖일 때만)
+        if ((sx1 < -50 || sx1 > W + 50 || sy1 < -50 || sy1 > H + 50) &&
+            (sx2 < -50 || sx2 > W + 50 || sy2 < -50 || sy2 > H + 50)) continue;
+
+        // 근접도 0(먼)~1(가까운). 밝기/굵기에 사용.
+        const proximity = Math.min(1, (Z_FAR - p.z) / Z_FAR);
+        const width = Math.max(0.5, 5 * proximity);
+
+        // 외부 글로우 (네온 후광)
+        ctx.shadowColor = `hsl(${p.hue}, 100%, 60%)`;
+        ctx.shadowBlur = 18 * proximity;
+        ctx.strokeStyle = `hsla(${p.hue}, 100%, 70%, ${proximity})`;
+        ctx.lineWidth = width;
+        ctx.beginPath();
+        ctx.moveTo(sx2, sy2);
+        ctx.lineTo(sx1, sy1);
+        ctx.stroke();
+
+        // 흰색 심지 (가까운 네온만) — 진짜 네온등 가운데 흰빛 재현
+        if (proximity > 0.4) {
+          ctx.shadowBlur = 8;
+          ctx.strokeStyle = `rgba(255, 255, 255, ${proximity})`;
+          ctx.lineWidth = Math.max(0.5, width / 3);
+          ctx.beginPath();
+          ctx.moveTo(sx2, sy2);
+          ctx.lineTo(sx1, sy1);
+          ctx.stroke();
+        }
+      }
+
+      ctx.globalCompositeOperation = 'source-over';
+      requestAnimationFrame(draw);
+    }
+    draw();
+    console.log('[tunnel] 네온 워프 시작 — 0~10s 정찰, 10~30s 가속, 30s+ 폭주');
+  })();
   </script>
 
 </body>
